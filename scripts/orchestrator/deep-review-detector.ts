@@ -280,7 +280,7 @@ export async function checkAndPromptDeepReview(): Promise<void> {
 }
 
 // Run if executed directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   checkAndPromptDeepReview().catch(error => {
     console.error('❌ Deep review detector failed:', error);
     process.exit(1);
