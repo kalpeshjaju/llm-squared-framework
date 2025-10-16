@@ -1,0 +1,95 @@
+name: Health Check
+
+on:
+  schedule:
+    # Run every hour
+    - cron: '0 * * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run health check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          npm run health-check
+
+      - name: Check for stale PRs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking for stale maker-checker PRs..."
+
+          # Find PRs with maker-checker labels that haven't been updated in 24 hours
+          gh pr list \
+            --label "🤖 maker-checker:active" \
+            --state open \
+            --json number,updatedAt \
+            --jq '.[] | select((.updatedAt | fromdateiso8601) < (now - 86400)) | .number' \
+            > stale_prs.txt
+
+          if [ -s stale_prs.txt ]; then
+            echo "Found stale PRs:"
+            cat stale_prs.txt
+
+            while read pr_number; do
+              gh pr comment "$pr_number" --body "## ⚠️ Stale Maker-Checker Process
+
+              This PR has had an active maker-checker process for over 24 hours with no updates.
+
+              **Possible issues:**
+              - Process may have stalled
+              - API rate limits reached
+              - Cost caps exceeded
+
+              **Actions:**
+              - Check the latest workflow run
+              - Comment \`/retry\` to restart
+              - Comment \`/stop\` to halt the process"
+            done < stale_prs.txt
+          else
+            echo "No stale PRs found"
+          fi
+
+      - name: Report health status
+        if: always()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK" ]; then
+            STATUS="${{ job.status }}"
+            EMOJI="✅"
+
+            if [ "$STATUS" != "success" ]; then
+              EMOJI="❌"
+            fi
+
+            curl -X POST "$SLACK_WEBHOOK" \
+              -H 'Content-Type: application/json' \
+              -d "{
+                \"text\": \"$EMOJI Maker-Checker Health Check: $STATUS\",
+                \"blocks\": [{
+                  \"type\": \"section\",
+                  \"text\": {
+                    \"type\": \"mrkdwn\",
+                    \"text\": \"*Maker-Checker Health Check*\\n\\nStatus: $STATUS\\nTime: $(date -u +'%Y-%m-%d %H:%M:%S UTC')\"
+                  }
+                }]
+              }"
+          fi

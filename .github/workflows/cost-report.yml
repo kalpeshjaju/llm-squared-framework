@@ -1,0 +1,106 @@
+name: Weekly Cost Report
+
+on:
+  schedule:
+    # Run every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  cost-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Download cost data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: maker-checker-state-pr-*
+          path: .maker-checker-costs/
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Generate cost report
+        run: |
+          npm run cost-report
+
+      - name: Read report
+        id: report
+        run: |
+          if [ -f cost-report.txt ]; then
+            REPORT=$(cat cost-report.txt)
+            echo "report<<EOF" >> $GITHUB_OUTPUT
+            echo "$REPORT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "report=No cost data available" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send report to Slack
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          curl -X POST "$SLACK_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"text\": \"📊 Weekly Maker-Checker Cost Report\",
+              \"blocks\": [{
+                \"type\": \"section\",
+                \"text\": {
+                  \"type\": \"mrkdwn\",
+                  \"text\": \"*Weekly Cost Report*\\n\\n\`\`\`\\n${{ steps.report.outputs.report }}\\n\`\`\`\"
+                }
+              }]
+            }"
+
+      - name: Create GitHub Issue with report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Weekly Cost Report - $(date +'%Y-%m-%d')" \
+            --body "## 📊 Maker-Checker Cost Report
+
+          $(cat cost-report.txt)
+
+          ---
+          *Generated automatically by GitHub Actions*" \
+            --label "maker-checker,cost-report"
+
+      - name: Check for cost warnings
+        run: |
+          # Check if monthly cap is approaching
+          if grep -q "WARNING" cost-report.txt || grep -q "EXCEEDED" cost-report.txt; then
+            echo "⚠️ Cost warning detected!"
+
+            # Create high-priority issue
+            gh issue create \
+              --title "🚨 Maker-Checker Cost Warning - Action Required" \
+              --body "## ⚠️ Cost Alert
+
+          The Maker-Checker system has detected cost concerns:
+
+          $(grep -E "WARNING|EXCEEDED" cost-report.txt)
+
+          **Recommended Actions:**
+          1. Review \`config/autonomous-config.yml\`
+          2. Consider reducing \`max_iterations\`
+          3. Increase \`quality_threshold\` to reduce iterations
+          4. Review recent PRs for unusual cost patterns
+
+          **Full Report:**
+          See issue: Weekly Cost Report - $(date +'%Y-%m-%d')" \
+              --label "maker-checker,urgent,cost-alert" \
+              --assignee "${{ github.repository_owner }}"
+          fi

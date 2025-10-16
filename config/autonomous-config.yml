@@ -1,0 +1,73 @@
+# Maker-Checker Autonomous Configuration
+# Edit these settings to customize behavior (no coding needed!)
+
+# How many times should Claude try to improve the code?
+max_iterations: 5
+
+# What quality score is good enough? (0.0-1.0)
+quality_threshold: 0.85
+
+# When should it automatically merge? (0.0-1.0)
+auto_merge_threshold: 0.90
+auto_merge_enabled: false  # Set to true to enable auto-merge
+
+# Cost Protection
+max_cost_per_pr: 5.00      # Maximum dollars per PR
+monthly_cost_cap: 100.00   # Maximum dollars per month
+
+# Claude API Settings
+claude:
+  model: "claude-sonnet-4-20250514"
+  temperature: 0.3
+  max_tokens: 8000
+
+# Codex/OpenAI API Settings
+codex:
+  model: "gpt-5-codex"
+  temperature: 0.3
+  max_tokens: 8000
+  focus_areas:
+    - security
+    - performance
+    - type_safety
+    - code_quality
+    - best_practices
+
+# When to trigger reviews
+iteration_triggers:
+  codex_review: "on_pr_open_or_push"   # When to run Codex review
+  claude_response: "on_codex_review"    # When Claude responds
+  re_review: "on_claude_push"           # When to re-review
+
+# Convergence Detection
+convergence:
+  min_iterations: 2                     # Minimum iterations before stopping
+  stagnation_threshold: 3               # Stop if no improvement for N iterations
+
+# Notifications
+slack_enabled: false                    # Enable Slack notifications
+slack_webhook: "${SLACK_WEBHOOK}"       # From GitHub Secrets
+
+# When to notify you
+notify_on:
+  - iteration_complete                  # After each iteration
+  - ready_to_merge                      # When PR is ready
+  - needs_attention                     # When human review needed
+  - cost_warning                        # When approaching cost limit
+  - stagnant                            # When not improving
+  - error                               # When errors occur
+
+# Safety: When to require human approval before merging
+require_human_approval_if:
+  quality_score_below: 0.85
+  security_issues_found: true
+  iterations_exceeded: true
+  cost_exceeded: true
+  tests_failing: true
+
+# Labels to add to PRs
+labels:
+  in_progress: "🤖 maker-checker:active"
+  ready: "✅ maker-checker:ready"
+  needs_attention: "⚠️ maker-checker:attention"
+  error: "🔴 maker-checker:error"

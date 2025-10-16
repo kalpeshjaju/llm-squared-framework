@@ -1,0 +1,102 @@
+name: Autonomous Maker-Checker
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  maker-checker:
+    # Only run on PRs or PR comments
+    if: |
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      statuses: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+
+      - name: Get PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for skip conditions
+        id: check
+        run: |
+          # Skip if comment is not a trigger command
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            COMMENT="${{ github.event.comment.body }}"
+            if [[ ! "$COMMENT" =~ ^/(retry|review|check) ]]; then
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          # Skip if PR is draft (optional - remove if you want to review drafts)
+          # if [ "${{ github.event.pull_request.draft }}" == "true" ]; then
+          #   echo "skip=true" >> $GITHUB_OUTPUT
+          #   exit 0
+          # fi
+
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Run Maker-Checker
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          npm run start
+
+      - name: Handle failure
+        if: failure() && steps.check.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ steps.pr.outputs.number }} --body "## ❌ Maker-Checker Failed
+
+          The automated maker-checker process encountered an error.
+
+          **Action**: Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+
+          You can retry with: \`/retry\`"
+
+      - name: Upload state artifacts
+        if: always() && steps.check.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: maker-checker-state-pr-${{ steps.pr.outputs.number }}
+          path: |
+            .maker-checker-state/
+            .maker-checker-costs/
+          retention-days: 30
